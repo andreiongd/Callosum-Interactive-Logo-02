@@ -94,6 +94,10 @@ var edgeFollowStrength = 0.05;
 var edgeFollowReturn = 0.04;
 var edgeFollowDamping = 0.7;
 var edgeFollowMarkerRadius = 400;
+// Proximity-based responsiveness: far = slower, near = faster.
+// Final follow speed multiplier is lerp(min..max, hoverWeight).
+var edgeFollowSpeedMinMul = 0.75;
+var edgeFollowSpeedMaxMul = 3.0;
 
 var edgeTopFollowMinDeg = -60;
 var edgeTopFollowMaxDeg = 30;
@@ -160,6 +164,10 @@ var innerSproutBoundsCenter = null;
 var bShowInnerSprout = true;
 // InnerSprout-specific scale (in logo-space). 1.0 = current.
 // Use this if you want the sprouts smaller/larger without affecting the rest.
+// Proximity-based responsiveness for innerSprouts (based on mouse distance to pivot)
+var innerSproutProximityRadius = 320; // in logo/viewBox units
+var innerSproutSpeedMinMul = 0.75;
+var innerSproutSpeedMaxMul = 3.0;
 var innerSproutScale = 1.0;
 
 // Rest rotations in degrees (each instance uses one when mouse is centered)
@@ -355,7 +363,7 @@ function draw() {
   const isHovering =
     mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height;
 
-  updateInnerSproutRotations(isHovering);
+  updateInnerSproutRotations(localMouseLogo, isHovering);
   // updateDeformedPolylines(localMouseLogo, isHovering);
   stroke('black');
   strokeWeight(3);
@@ -457,13 +465,14 @@ function drawInnerSproutHud() {
 }
 
 // ----------------------------------
-function applyInnerSproutRotationSpring(targetDeg, which) {
+function applyInnerSproutRotationSpring(targetDeg, which, speedMul) {
   let cur = which === 1 ? innerSproutCurrentDeg01 : which === 2 ? innerSproutCurrentDeg02 : innerSproutCurrentDeg03;
   let vel = which === 1 ? innerSproutVelDeg01 : which === 2 ? innerSproutVelDeg02 : innerSproutVelDeg03;
   // No-bounce smoothing (constant max step).
   // Using a constant step (instead of lerp) means smaller ranges finish sooner.
   const maxDelta = getGlobalInnerSproutMaxDeltaDeg() || 1;
-  const maxStep = (maxDelta * innerSproutFollowStrength) / followSettleFactor;
+  const speed = (speedMul == null) ? 1 : speedMul;
+  const maxStep = (maxDelta * innerSproutFollowStrength * speed) / followSettleFactor;
   const slowRadius = maxDelta * 0.45;
   const res = followEaseInOut(cur, targetDeg, maxStep, slowRadius, vel);
   cur = res.pos;
@@ -481,13 +490,72 @@ function applyInnerSproutRotationSpring(targetDeg, which) {
 }
 
 // ----------------------------------
-function updateInnerSproutRotations(isHovering) {
+function updateInnerSproutRotations(localMouseLogo, isHovering) {
   // If mouse is outside the canvas, ease back to rest.
   if (!isHovering) {
-    applyInnerSproutRotationSpring(innerSproutRotationDeg01, 1);
-    applyInnerSproutRotationSpring(innerSproutRotationDeg02, 2);
-    applyInnerSproutRotationSpring(innerSproutRotationDeg03, 3);
+    applyInnerSproutRotationSpring(innerSproutRotationDeg01, 1, 1);
+    applyInnerSproutRotationSpring(innerSproutRotationDeg02, 2, 1);
+    applyInnerSproutRotationSpring(innerSproutRotationDeg03, 3, 1);
     return;
+  }
+
+  // Proximity-based speed PER SPROUT:
+  // For each sprout instance, compute an approximate instance center in logo space
+  // (including manual offset + innerSproutScale + that sprout's current rotation).
+  // Closer sprout instance => higher speed multiplier.
+  function rotatePointAround(px, py, cx, cy, rads) {
+    const dx = px - cx;
+    const dy = py - cy;
+    const cr = Math.cos(rads);
+    const sr = Math.sin(rads);
+    return {
+      x: cx + dx * cr - dy * sr,
+      y: cy + dx * sr + dy * cr
+    };
+  }
+
+  function getSproutInstanceCenter(rotationDeg) {
+    if (!innerSproutCentroid) return null;
+
+    const pivotBase = (innerSproutUseBoundsPivot && innerSproutBoundsCenter)
+      ? innerSproutBoundsCenter
+      : innerSproutCentroid;
+    const pivotX = innerSproutPivotUseAbsolute
+      ? innerSproutPivotX
+      : (pivotBase.x + innerSproutPivotOffsetX);
+    const pivotY = innerSproutPivotUseAbsolute
+      ? innerSproutPivotY
+      : (pivotBase.y + innerSproutPivotOffsetY);
+
+    const centerBase = innerSproutBoundsCenter || innerSproutCentroid;
+    let x = centerBase.x + (innerSproutOffsetX || 0);
+    let y = centerBase.y + (innerSproutOffsetY || 0);
+
+    // Apply the same scale used during rendering (scale about the pivot).
+    const s = (innerSproutScale == null) ? 1 : innerSproutScale;
+    if (s !== 1) {
+      x = pivotX + (x - pivotX) * s;
+      y = pivotY + (y - pivotY) * s;
+    }
+
+    // Apply rotation about the pivot.
+    const rot = radians(rotationDeg || 0);
+    if (rot) {
+      const p = rotatePointAround(x, y, pivotX, pivotY, rot);
+      x = p.x;
+      y = p.y;
+    }
+    return { x, y };
+  }
+
+  function getSproutSpeedMul(rotationDeg) {
+    if (!localMouseLogo) return 1;
+    const c = getSproutInstanceCenter(rotationDeg);
+    if (!c) return 1;
+    const d = Math.hypot(localMouseLogo.x - c.x, localMouseLogo.y - c.y);
+    const r = Math.max(innerSproutProximityRadius || 1, 1);
+    const w = easeSmoothstep(1 - constrain(d / r, 0, 1));
+    return lerp(innerSproutSpeedMinMul, innerSproutSpeedMaxMul, w);
   }
 
   const halfW = width * 0.5 || 1;
@@ -504,9 +572,14 @@ function updateInnerSproutRotations(isHovering) {
     ? innerSproutRotationDeg03 + (innerSproutMaxDeg03 - innerSproutRotationDeg03) * amt
     : innerSproutRotationDeg03 + (innerSproutMinDeg03 - innerSproutRotationDeg03) * amt;
 
-  applyInnerSproutRotationSpring(t01, 1);
-  applyInnerSproutRotationSpring(t02, 2);
-  applyInnerSproutRotationSpring(t03, 3);
+  // Each sprout reacts based on its own proximity to the mouse.
+  const s1 = getSproutSpeedMul(innerSproutCurrentDeg01);
+  const s2 = getSproutSpeedMul(innerSproutCurrentDeg02);
+  const s3 = getSproutSpeedMul(innerSproutCurrentDeg03);
+
+  applyInnerSproutRotationSpring(t01, 1, s1);
+  applyInnerSproutRotationSpring(t02, 2, s2);
+  applyInnerSproutRotationSpring(t03, 3, s3);
 }
 
 // ----------------------------------
@@ -1354,10 +1427,13 @@ function globalMouseXToEdgeOffset(minOffsetRad, maxOffsetRad) {
 
 // ----------------------------------
 function updateEdgeFollower(baseAngle, localMouse, centerX, centerY, isHovering, edgeKey, hoverWeight) {
+  const w = constrain(hoverWeight || 0, 0, 1);
+  const speedMul = lerp(edgeFollowSpeedMinMul, edgeFollowSpeedMaxMul, w);
+
   // New: global mouse-X driven follow (affects all edges, regardless of proximity).
   if (bGlobalMouseXEdgeFollow) {
     if (!isHovering) {
-      return applyEdgeFollowSpring(0, edgeKey);
+      return applyEdgeFollowSpring(0, edgeKey, speedMul);
     }
 
     let minOffset = 0;
@@ -1377,12 +1453,12 @@ function updateEdgeFollower(baseAngle, localMouse, centerX, centerY, isHovering,
     }
 
     const targetOffset = globalMouseXToEdgeOffset(minOffset, maxOffset);
-    return applyEdgeFollowSpring(targetOffset, edgeKey);
+    return applyEdgeFollowSpring(targetOffset, edgeKey, speedMul);
   }
 
   // Legacy: local angle-based follow (only engages when hovering near the edge)
   if (!localMouse || !isHovering || !hoverWeight) {
-    return applyEdgeFollowSpring(0, edgeKey);
+    return applyEdgeFollowSpring(0, edgeKey, speedMul);
   }
   const dx = localMouse.x - centerX;
   const dy = localMouse.y - centerY;
@@ -1405,11 +1481,11 @@ function updateEdgeFollower(baseAngle, localMouse, centerX, centerY, isHovering,
     const maxOffset = radians(edgeBottomFollowMaxDeg);
     delta = constrain(delta, minOffset, maxOffset);
   }
-  return applyEdgeFollowSpring(delta * hoverWeight, edgeKey);
+  return applyEdgeFollowSpring(delta * hoverWeight, edgeKey, speedMul);
 }
 
 // ----------------------------------
-function applyEdgeFollowSpring(targetOffset, edgeKey) {
+function applyEdgeFollowSpring(targetOffset, edgeKey, speedMul) {
   let offset = edgeKey === "top" ? edgeTopFollowOffset :
                edgeKey === "topRight" ? edgeTopRightFollowOffset :
                edgeKey === "bottom" ? edgeBottomFollowOffset :
@@ -1420,7 +1496,9 @@ function applyEdgeFollowSpring(targetOffset, edgeKey) {
                  edgeLeftFollowVelocity;
   // No-bounce smoothing (constant max step).
   // Using a constant step (instead of lerp) means smaller ranges finish sooner.
-  const amt = targetOffset === 0 ? edgeFollowReturn : edgeFollowStrength;
+  const speed = (speedMul == null) ? 1 : speedMul;
+  const amtBase = targetOffset === 0 ? edgeFollowReturn : edgeFollowStrength;
+  const amt = amtBase * speed;
   const maxRange = getGlobalEdgeFollowMaxOffsetRad() || 0.001;
   const maxStep = (maxRange * amt) / followSettleFactor;
   const slowRadius = maxRange * 0.45;
