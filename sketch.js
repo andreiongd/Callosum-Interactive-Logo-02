@@ -5,6 +5,11 @@
 // --- Colors ---
 // Background pink. Reuse this for "cut-out" shapes.
 var bgColor;
+// Main ink color (matches logo SVG fill: #040404)
+var logoColor;
+
+// InnerSprout stroke settings
+var innerSproutWeightStroke = 0;
 
 // --- Assets (raw SVG + reference) ---
 var svgStrings; // logofull01.svg
@@ -30,7 +35,7 @@ var svgFitLogo = null;
 var svgFitEdges = null;
 // Master scale applied to *all* artwork (logo + edges + inner sprout).
 // 1.0 = current size, 0.85 = 85% size, etc.
-var globalArtworkScale = 1.0;
+var globalArtworkScale = .85;
 
 // User-controlled scales (1.0 = full fit) multiplied by the master scale.
 var svgScaleFactorLogo = 0.76 * globalArtworkScale;
@@ -90,14 +95,14 @@ var bGlobalMouseXEdgeFollow = true;
 
 var edgeFollowRange = 200; // range around ellipse radius to engage
 // Smoothing amounts (no-bounce). Lower = smoother/slower.
-var edgeFollowStrength = 0.05;
+var edgeFollowStrength = 0.06;
 var edgeFollowReturn = 0.04;
 var edgeFollowDamping = 0.7;
 var edgeFollowMarkerRadius = 400;
 // Proximity-based responsiveness: far = slower, near = faster.
 // Final follow speed multiplier is lerp(min..max, hoverWeight).
 var edgeFollowSpeedMinMul = 0.75;
-var edgeFollowSpeedMaxMul = 3.0;
+var edgeFollowSpeedMaxMul = 5.0;
 
 var edgeTopFollowMinDeg = -60;
 var edgeTopFollowMaxDeg = 30;
@@ -150,7 +155,7 @@ var edgeTopRightExtendY = 0;
 var edgeTopRightOscillate = true;
 
 // --- UI / rendering flags ---
-var bShowReference = true;
+var bShowReference = false;
 // Toggle for the debug ellipse overlay (only draws when helpers are enabled).
 // NOTE: This must be a boolean; using an undefined identifier here will throw
 // a ReferenceError and prevent the entire sketch from loading.
@@ -167,8 +172,8 @@ var bShowInnerSprout = true;
 // Proximity-based responsiveness for innerSprouts (based on mouse distance to pivot)
 var innerSproutProximityRadius = 320; // in logo/viewBox units
 var innerSproutSpeedMinMul = 0.75;
-var innerSproutSpeedMaxMul = 3.0;
-var innerSproutScale = 1.0;
+var innerSproutSpeedMaxMul = 5.0;
+var innerSproutScale = 0.99;
 
 // Rest rotations in degrees (each instance uses one when mouse is centered)
 // (These are your “base” angles)
@@ -220,7 +225,7 @@ var innerSproutPivotUseAbsolute = false;
 var innerSproutPivotX = 0;
 var innerSproutPivotY = 0;
 var innerSproutPivotOffsetX = 0;
-var innerSproutPivotOffsetY = 93;
+var innerSproutPivotOffsetY = 58;
 var bShowInnerSproutPivot = true;
 var innerSproutPivotNudgeStep = 1;
 var innerSproutPivotNudgeStep2 = 1;
@@ -239,7 +244,7 @@ function preload() {
   svgStrings = loadStrings("logofull01.svg");
   referenceImage = loadImage("CALLOSUM_MARK.png");
   edgeTopSvgStrings = loadStrings("edgetop02.svg");
-  innerSproutSvgStrings = loadStrings("innerSprout.svg");
+  innerSproutSvgStrings = loadStrings("innerSprout08.svg");
   edgeTopRightSvgStrings = loadStrings("edgetopright02.svg");
   edgeLeftSvgStrings = loadStrings("edgeleft02.svg");
   edgeBottomSvgStrings = loadStrings("edgebottom02.svg");
@@ -250,6 +255,7 @@ function setup() {
   createCanvas(1920, 1080);
 
   bgColor = color(254, 158, 207);
+  logoColor = color(4, 4, 4);
 
   makeSvgParser();
   svgViewBox = parseSvgViewBox(svgStrings);
@@ -333,13 +339,13 @@ function setup() {
 function draw() {
   background(bgColor);
   fill(0);
-  noStroke();
+  
 
   if (bShowReference && referenceImage) {
     push();
     if (svgFitLogo) {
-      translate(svgFitLogo.offsetX, svgFitLogo.offsetY);
-      scale(svgFitLogo.scale);
+      translate(svgFitLogo.offsetX*1.15, svgFitLogo.offsetY*1.65);
+      scale(svgFitLogo.scale*0.76);
     }
     tint(255, 120);
     // image(referenceImage, 0, 0);
@@ -365,8 +371,7 @@ function draw() {
 
   updateInnerSproutRotations(localMouseLogo, isHovering);
   // updateDeformedPolylines(localMouseLogo, isHovering);
-  stroke('black');
-  strokeWeight(3);
+
   noStroke();
   strokeJoin(ROUND);
   strokeCap(ROUND);
@@ -592,9 +597,12 @@ function drawInnerSproutCenteredInViewBox(rotationDeg) {
   if (!innerSproutCentroid || !innerSproutPolylines.length) return;
 
   push();
-  // Make sprout match background (cut-out look)
+  // Make sprout match background (cut-out look) + add outline stroke.
   fill(bgColor);
-  noStroke();
+  stroke(logoColor);
+  strokeWeight(innerSproutWeightStroke);
+  strokeJoin(ROUND);
+  strokeCap(ROUND);
 
   // Manual alignment nudges (logo coordinate system)
   if (innerSproutOffsetX || innerSproutOffsetY) {
@@ -624,7 +632,21 @@ function drawInnerSproutCenteredInViewBox(rotationDeg) {
     rotate(innerSproutRotation);
     translate(-pivotX, -pivotY);
   }
-  drawPolylines(innerSproutPolylines);
+
+  // Draw with CLOSED shapes when the polyline is already explicitly closed
+  // (first point == last point). This ensures fill + stroke render cleanly.
+  for (let i = 0; i < innerSproutPolylines.length; i++) {
+    const poly = innerSproutPolylines[i];
+    if (!poly || poly.length < 2) continue;
+    const first = poly[0];
+    const last = poly[poly.length - 1];
+    const isClosed = first && last && first.x === last.x && first.y === last.y;
+    beginShape();
+    for (let j = 0; j < poly.length; j++) {
+      vertex(poly[j].x, poly[j].y);
+    }
+    endShape(isClosed ? CLOSE : undefined);
+  }
 
   // Debug pivot marker (draw on top of the shape so it remains visible)
   if (bShowInnerSproutPivot) {
