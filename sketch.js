@@ -162,6 +162,7 @@ var edgeTopExtendLerp = .05;
 var edgeTopExtendReturnLerp = .03;
 var edgeTopExtendBoost = 2.0;
 
+
 var edgeTopOffsetExtendMulMaxX = 1.015;
 var edgeTopOffsetExtendMulMaxY = 1.015;
 var edgeTopRightOffsetExtendMulMaxX = 0.99;
