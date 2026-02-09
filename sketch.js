@@ -41,7 +41,7 @@ var globalArtworkScale = 0.85;
 
 // User-controlled scales (1.0 = full fit) multiplied by the master scale.
 var svgScaleFactorLogo = 0.76 * globalArtworkScale;
-var svgScaleFactorEdges = 0.55 * globalArtworkScale; // Edge overlay scale
+var svgScaleFactorEdges = 0.76 * globalArtworkScale; // Edge overlay scale
 
 // --- Deformation system ---
 var basePolylines = [];
@@ -142,22 +142,22 @@ var edgeHoverWeightLeft = 0;
 var edgeHoverWeightBottom = 0;
 
 // --- Edge drawing offsets (baked into deform space) ---
-var edgeTopOffsetX = 200;
-var edgeTopOffsetY = -653;
-var edgeTopRightOffsetX = 230;
-var edgeTopRightOffsetY = -614;
-var edgeLeftOffsetX = -696;
-var edgeLeftOffsetY = -160;
-var edgeBottomOffsetX = -1292;
-var edgeBottomOffsetY = -587;
+var edgeTopOffsetX = 100;
+var edgeTopOffsetY = -640;
+var edgeTopRightOffsetX = - 112;
+var edgeTopRightOffsetY = -118;
+var edgeLeftOffsetX = - 216;
+var edgeLeftOffsetY = -350;
+var edgeBottomOffsetX = -1175;
+var edgeBottomOffsetY = - 597;
 var edgeTopExtendY = 0;
 var edgeTopRightExtendY = 0;
 var edgeLeftExtendX = 0;
 var edgeBottomExtendY = 0;
-var edgeTopExtendToLongY = 80;
-var edgeTopRightExtendToLongY = 50;
+var edgeTopExtendToLongY = 20;
+var edgeTopRightExtendToLongY = 20;
 var edgeLeftExtendToLongX = 20;
-var edgeBottomExtendToLongY = 40;
+var edgeBottomExtendToLongY = 20;
 var edgeTopExtendLerp = .05;
 var edgeTopExtendReturnLerp = .03;
 var edgeTopExtendBoost = 2.0;
@@ -269,12 +269,12 @@ let bDoExportSvg = false;
 function preload() {
   svgStrings = loadStrings("logofull01.svg");
   referenceImage = loadImage("CALLOSUM_MARK.png");
-  edgeTopSvgStrings = loadStrings("edgetop02.svg");
+  edgeTopSvgStrings = loadStrings("edgetop03.svg");
   edgeTopLongSvgStrings = loadStrings("edgetop02long.svg");
   innerSproutSvgStrings = loadStrings("innerSprout08.svg");
-  edgeTopRightSvgStrings = loadStrings("edgetopright02.svg");
-  edgeLeftSvgStrings = loadStrings("edgeleft02.svg");
-  edgeBottomSvgStrings = loadStrings("edgetop02.svg");
+  edgeTopRightSvgStrings = loadStrings("edgetopright03.svg");
+  edgeLeftSvgStrings = loadStrings("edgeleft03.svg");
+  edgeBottomSvgStrings = loadStrings("edgetop03.svg");
 }
 
 // ----------------------------------
@@ -310,16 +310,7 @@ function setup() {
     polylineTolerance
   );
 
-  // Use the long asset as the "full hover" target length for edgeTop.
-  const topBaseY = getPolylinesAxisMinMax(edgeTopPolylines, "y");
-  const topLongY = getPolylinesAxisMinMax(edgeTopLongPolylines, "y");
-  if (topBaseY && topLongY) {
-    const baseRange = topBaseY.max - topBaseY.min;
-    const longRange = topLongY.max - topLongY.min;
-    const extendByTopDelta = topBaseY.min - topLongY.min;
-    const extendByRangeDelta = longRange - baseRange;
-    edgeTopExtendToLongY = Math.max(0, extendByTopDelta, extendByRangeDelta);
-  }
+  // edgeTopExtendToLongY is manual (do not auto-calibrate here).
 
   // IMPORTANT: if we stretch the geometry (edgeTopExtendY), the centroid changes.
   // But our orbit placement uses the centroid as the pivot/anchor.
