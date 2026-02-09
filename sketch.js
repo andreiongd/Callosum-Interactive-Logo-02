@@ -15,6 +15,7 @@ var innerSproutWeightStroke = 0;
 var svgStrings; // logofull01.svg
 var referenceImage; // CALLOSUM_MARK.png
 var edgeTopSvgStrings;
+var edgeTopLongSvgStrings;
 var edgeTopRightSvgStrings;
 var edgeLeftSvgStrings;
 var edgeBottomSvgStrings;
@@ -25,6 +26,7 @@ var svgViewBox = null;
 var svgPathCommands = []; // Commands: Array<Array<cmd>>
 var svgPolylines = []; // Pure coordinates: Array<Array<p5.Vector>>
 var edgeTopPolylines = [];
+var edgeTopLongPolylines = [];
 var edgeTopRightPolylines = [];
 var edgeLeftPolylines = [];
 var edgeBottomPolylines = [];
@@ -35,7 +37,7 @@ var svgFitLogo = null;
 var svgFitEdges = null;
 // Master scale applied to *all* artwork (logo + edges + inner sprout).
 // 1.0 = current size, 0.85 = 85% size, etc.
-var globalArtworkScale = .85;
+var globalArtworkScale = 0.85;
 
 // User-controlled scales (1.0 = full fit) multiplied by the master scale.
 var svgScaleFactorLogo = 0.76 * globalArtworkScale;
@@ -98,11 +100,11 @@ var edgeFollowRange = 200; // range around ellipse radius to engage
 var edgeFollowStrength = 0.06;
 var edgeFollowReturn = 0.04;
 var edgeFollowDamping = 0.7;
-var edgeFollowMarkerRadius = 400;
+var edgeFollowMarkerRadius = 600;
 // Proximity-based responsiveness: far = slower, near = faster.
 // Final follow speed multiplier is lerp(min..max, hoverWeight).
 var edgeFollowSpeedMinMul = 0.75;
-var edgeFollowSpeedMaxMul = 5.0;
+var edgeFollowSpeedMaxMul = 2.0;
 
 var edgeTopFollowMinDeg = -60;
 var edgeTopFollowMaxDeg = 30;
@@ -143,19 +145,39 @@ var edgeHoverWeightBottom = 0;
 var edgeTopOffsetX = 200;
 var edgeTopOffsetY = -653;
 var edgeTopRightOffsetX = 230;
-var edgeTopRightOffsetY = -618;
+var edgeTopRightOffsetY = -614;
 var edgeLeftOffsetX = -696;
 var edgeLeftOffsetY = -160;
-var edgeBottomOffsetX = -230;
-var edgeBottomOffsetY = -74;
+var edgeBottomOffsetX = -1292;
+var edgeBottomOffsetY = -587;
 var edgeTopExtendY = 0;
 var edgeTopRightExtendY = 0;
+var edgeLeftExtendX = 0;
+var edgeBottomExtendY = 0;
+var edgeTopExtendToLongY = 80;
+var edgeTopRightExtendToLongY = 50;
+var edgeLeftExtendToLongX = 20;
+var edgeBottomExtendToLongY = 40;
+var edgeTopExtendLerp = .1;
+var edgeTopExtendReturnLerp = .03;
+var edgeTopExtendBoost = 2.0;
+var bClosestTipOnlyExtend = true;
+// Extension profile along an edge (t: base=0, tip=1).
+// Start extension later so lower/base sections stay quiet.
+var edgeExtendStartT = 0.88;
+var edgeExtendFullT = 0.82;
+// Tip distance influence should assist, not dominate axis progression.
+var edgeExtendTipBias = 0.18;
 
 // --- Edge-specific toggles ---
 var edgeTopRightOscillate = true;
 
 // --- UI / rendering flags ---
 var bShowReference = false;
+var bShowLogoMouseCursor = true;
+var logoMouseCursorDiameter = 12;
+var logoMouseCursorScale = 0.62;
+var logoMouseCursorStrokeWeight = 2;
 // Toggle for the debug ellipse overlay (only draws when helpers are enabled).
 // NOTE: This must be a boolean; using an undefined identifier here will throw
 // a ReferenceError and prevent the entire sketch from loading.
@@ -172,7 +194,7 @@ var bShowInnerSprout = true;
 // Proximity-based responsiveness for innerSprouts (based on mouse distance to pivot)
 var innerSproutProximityRadius = 320; // in logo/viewBox units
 var innerSproutSpeedMinMul = 0.75;
-var innerSproutSpeedMaxMul = 5.0;
+var innerSproutSpeedMaxMul = 2.0;
 var innerSproutScale = 0.99;
 
 // Rest rotations in degrees (each instance uses one when mouse is centered)
@@ -244,15 +266,17 @@ function preload() {
   svgStrings = loadStrings("logofull01.svg");
   referenceImage = loadImage("CALLOSUM_MARK.png");
   edgeTopSvgStrings = loadStrings("edgetop02.svg");
+  edgeTopLongSvgStrings = loadStrings("edgetop02long.svg");
   innerSproutSvgStrings = loadStrings("innerSprout08.svg");
   edgeTopRightSvgStrings = loadStrings("edgetopright02.svg");
   edgeLeftSvgStrings = loadStrings("edgeleft02.svg");
-  edgeBottomSvgStrings = loadStrings("edgebottom02.svg");
+  edgeBottomSvgStrings = loadStrings("edgetop02.svg");
 }
 
 // ----------------------------------
 function setup() {
   createCanvas(1920, 1080);
+  if (bShowLogoMouseCursor) noCursor();
 
   bgColor = color(254, 158, 207);
   logoColor = color(4, 4, 4);
@@ -269,6 +293,10 @@ function setup() {
     getPathCommandsFromSvgStrings(edgeTopSvgStrings),
     polylineTolerance
   );
+  edgeTopLongPolylines = svgCommandsToPolylines(
+    getPathCommandsFromSvgStrings(edgeTopLongSvgStrings),
+    polylineTolerance
+  );
   innerSproutPolylines = svgCommandsToPolylines(
     getPathCommandsFromSvgStrings(innerSproutSvgStrings),
     polylineTolerance
@@ -277,6 +305,17 @@ function setup() {
     getPathCommandsFromSvgStrings(edgeTopRightSvgStrings),
     polylineTolerance
   );
+
+  // Use the long asset as the "full hover" target length for edgeTop.
+  const topBaseY = getPolylinesAxisMinMax(edgeTopPolylines, "y");
+  const topLongY = getPolylinesAxisMinMax(edgeTopLongPolylines, "y");
+  if (topBaseY && topLongY) {
+    const baseRange = topBaseY.max - topBaseY.min;
+    const longRange = topLongY.max - topLongY.min;
+    const extendByTopDelta = topBaseY.min - topLongY.min;
+    const extendByRangeDelta = longRange - baseRange;
+    edgeTopExtendToLongY = Math.max(0, extendByTopDelta, extendByRangeDelta);
+  }
 
   // IMPORTANT: if we stretch the geometry (edgeTopExtendY), the centroid changes.
   // But our orbit placement uses the centroid as the pivot/anchor.
@@ -339,7 +378,7 @@ function setup() {
 function draw() {
   background(bgColor);
   fill(0);
-  
+
 
   if (bShowReference && referenceImage) {
     push();
@@ -413,10 +452,29 @@ function draw() {
   bShowInnerSproutPivot = pivotWasShown;
   pop();
 
+  drawLogoMouseCursor();
+
   if (bDoExportSvg) {
     endRecordSvg();
     bDoExportSvg = false;
   }
+}
+
+// ----------------------------------
+function drawLogoMouseCursor() {
+  if (!bShowLogoMouseCursor) return;
+  if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) return;
+
+  const d = Math.max(logoMouseCursorDiameter || 0, 2);
+
+  push();
+  resetMatrix();
+  translate(mouseX, mouseY);
+
+  noStroke();
+  fill(50);
+  ellipse(0, 0, d, d);
+  pop();
 }
 
 // ----------------------------------
@@ -856,6 +914,26 @@ function computePolylinesBoundsCenter(polylines) {
 }
 
 // ----------------------------------
+function getPolylinesAxisMinMax(polylines, axis) {
+  const axisKey = axis === "x" ? "x" : "y";
+  let minV = Infinity;
+  let maxV = -Infinity;
+  let found = false;
+  for (let i = 0; i < polylines.length; i++) {
+    const poly = polylines[i];
+    if (!poly || !poly.length) continue;
+    for (let j = 0; j < poly.length; j++) {
+      const v = poly[j][axisKey];
+      minV = Math.min(minV, v);
+      maxV = Math.max(maxV, v);
+      found = true;
+    }
+  }
+  if (!found) return null;
+  return { min: minV, max: maxV };
+}
+
+// ----------------------------------
 function drawEllipseOverlay() {
   if (!bShowEllipseOverlay || !bShowHelpers || !svgViewBox) return;
   const centerX = svgViewBox.minX + svgViewBox.width / 2 + circleOffsetX;
@@ -978,6 +1056,155 @@ function stretchPolylinesDown(polylines, amount) {
 }
 
 // ----------------------------------
+function stretchPolylinesFromExtreme(polylines, axis, direction, amount, tipOverride) {
+  if (!amount || !polylines || !polylines.length) return;
+  const axisKey = axis === "x" ? "x" : "y";
+  const isMin = direction === "min";
+
+  let minV = Infinity;
+  let maxV = -Infinity;
+  for (let i = 0; i < polylines.length; i++) {
+    const poly = polylines[i];
+    if (!poly || !poly.length) continue;
+    for (let j = 0; j < poly.length; j++) {
+      const v = poly[j][axisKey];
+      minV = Math.min(minV, v);
+      maxV = Math.max(maxV, v);
+    }
+  }
+  const range = maxV - minV;
+  if (!Number.isFinite(range) || range <= 0) return;
+  const tipData = computeTipDistanceData(polylines, axis, direction, tipOverride);
+  if (!tipData) return;
+
+  const sign = isMin ? -1 : 1;
+  for (let i = 0; i < polylines.length; i++) {
+    const poly = polylines[i];
+    if (!poly) continue;
+    for (let j = 0; j < poly.length; j++) {
+      const pt = poly[j];
+      const t = isMin
+        ? 1 - (pt[axisKey] - minV) / range
+        : (pt[axisKey] - minV) / range;
+      const distToTip = Math.hypot(pt.x - tipData.tip.x, pt.y - tipData.tip.y);
+      const tipT = 1 - constrain(distToTip / tipData.maxDist, 0, 1);
+      const w = remapEdgeExtendWeight(t, tipT);
+      pt[axisKey] += sign * amount * w;
+    }
+  }
+}
+
+// ----------------------------------
+function clonePolylines(polylines) {
+  const copy = [];
+  for (let i = 0; i < polylines.length; i++) {
+    const poly = polylines[i] || [];
+    const polyCopy = [];
+    for (let j = 0; j < poly.length; j++) {
+      polyCopy.push({ x: poly[j].x, y: poly[j].y });
+    }
+    copy.push(polyCopy);
+  }
+  return copy;
+}
+
+// ----------------------------------
+function getEdgeExtendedPolylinesCentered(polylines, axis, direction, amount, dirX, dirY, tipOverride) {
+  if (!amount) return polylines;
+  const centroidBefore = computePolylinesCentroid(polylines);
+  if (!centroidBefore) return polylines;
+  const extended = clonePolylines(polylines);
+  const hasDirectionalVector =
+    Number.isFinite(dirX) &&
+    Number.isFinite(dirY) &&
+    (Math.abs(dirX) > 1e-6 || Math.abs(dirY) > 1e-6);
+  if (!hasDirectionalVector) {
+    stretchPolylinesFromExtreme(extended, axis, direction, amount, tipOverride);
+  } else {
+    const axisKey = axis === "x" ? "x" : "y";
+    const isMin = direction === "min";
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (let i = 0; i < extended.length; i++) {
+      const poly = extended[i];
+      if (!poly || !poly.length) continue;
+      for (let j = 0; j < poly.length; j++) {
+        const v = poly[j][axisKey];
+        minV = Math.min(minV, v);
+        maxV = Math.max(maxV, v);
+      }
+    }
+    const range = maxV - minV;
+    if (Number.isFinite(range) && range > 0) {
+      const tipData = computeTipDistanceData(extended, axis, direction, tipOverride);
+      if (!tipData) return polylines;
+      const invLen = 1 / Math.hypot(dirX, dirY);
+      const ux = dirX * invLen;
+      const uy = dirY * invLen;
+      for (let i = 0; i < extended.length; i++) {
+        const poly = extended[i];
+        if (!poly) continue;
+        for (let j = 0; j < poly.length; j++) {
+          const pt = poly[j];
+          const t = isMin
+            ? 1 - (pt[axisKey] - minV) / range
+            : (pt[axisKey] - minV) / range;
+          const distToTip = Math.hypot(pt.x - tipData.tip.x, pt.y - tipData.tip.y);
+          const tipT = 1 - constrain(distToTip / tipData.maxDist, 0, 1);
+          const w = remapEdgeExtendWeight(t, tipT);
+          pt.x += ux * amount * w;
+          pt.y += uy * amount * w;
+        }
+      }
+    }
+  }
+  const centroidAfter = computePolylinesCentroid(extended);
+  if (centroidAfter) {
+    translatePolylines(
+      extended,
+      centroidBefore.x - centroidAfter.x,
+      centroidBefore.y - centroidAfter.y
+    );
+  }
+  return extended;
+}
+
+// ----------------------------------
+function computeTipDistanceData(polylines, axis, direction, tipOverride) {
+  const tip = (tipOverride && Number.isFinite(tipOverride.x) && Number.isFinite(tipOverride.y))
+    ? { x: tipOverride.x, y: tipOverride.y }
+    : computeExtremeClusterAverage(polylines, axis, direction, 0.75);
+  if (!tip) return null;
+  let maxDist = 0;
+  for (let i = 0; i < polylines.length; i++) {
+    const poly = polylines[i];
+    if (!poly) continue;
+    for (let j = 0; j < poly.length; j++) {
+      const pt = poly[j];
+      const d = Math.hypot(pt.x - tip.x, pt.y - tip.y);
+      if (d > maxDist) maxDist = d;
+    }
+  }
+  if (maxDist <= 1e-6) return null;
+  return { tip, maxDist };
+}
+
+// ----------------------------------
+function remapEdgeExtendWeight(tAxis, tTip) {
+  const axisT = constrain(tAxis == null ? 0 : tAxis, 0, 1);
+  const tipT = constrain(tTip == null ? axisT : tTip, 0, 1);
+  const tipBias = constrain(edgeExtendTipBias || 0, 0, 1);
+  const mixed = axisT * (1 - tipBias) + tipT * tipBias;
+
+  const startT = constrain(edgeExtendStartT || 0, 0, 0.99);
+  const fullT = constrain(edgeExtendFullT || 1, startT + 0.001, 1);
+  if (mixed <= startT) return 0;
+  if (mixed >= fullT) return 1;
+  const u = (mixed - startT) / (fullT - startT);
+  return u * u * (3 - 2 * u);
+}
+
+// ----------------------------------
 function translatePolylines(polylines, dx, dy) {
   if (!dx && !dy) return;
   for (let i = 0; i < polylines.length; i++) {
@@ -999,18 +1226,33 @@ function getEdgeFollowOffset(edgeKey) {
 }
 
 // ----------------------------------
-function getEdgeHoverWeight(localMouse, polylines, centroid, targetX, targetY, rotation, isHovering, markerAxis, markerDirection) {
+function getEdgeHoverWeight(localMouse, polylines, centroid, targetX, targetY, rotation, isHovering, markerAxis, markerDirection, extraRotation = 0, useMarkerProximity = true) {
   if (!isHovering || !localMouse || !polylines || !polylines.length || !centroid) return 0;
-  const markerPoint = getEdgeMarkerPoint(polylines, markerAxis, markerDirection);
-  if (markerPoint) {
-    const markerDist = Math.hypot(localMouse.x - markerPoint.x, localMouse.y - markerPoint.y);
-    if (markerDist > edgeFollowMarkerRadius) return 0;
-    return easeSmoothstep(1 - markerDist / edgeFollowMarkerRadius);
+  if (useMarkerProximity) {
+    const markerPoint = getEdgeMarkerPoint(polylines, markerAxis, markerDirection);
+    if (markerPoint) {
+      const markerWorld = edgeLocalToWorld(markerPoint, centroid, targetX, targetY, rotation, extraRotation);
+      const markerDist = Math.hypot(localMouse.x - markerWorld.x, localMouse.y - markerWorld.y);
+      if (markerDist > edgeFollowMarkerRadius) return 0;
+      return easeSmoothstep(1 - markerDist / edgeFollowMarkerRadius);
+    }
   }
-  const localPoint = worldToEdgeLocal(localMouse, centroid, targetX, targetY, rotation);
+  const localPoint = worldToEdgeLocal(localMouse, centroid, targetX, targetY, rotation, extraRotation);
   const dist = minDistanceToPolylines(polylines, localPoint.x, localPoint.y);
   if (dist > edgeFollowRange) return 0;
   return easeSmoothstep(1 - dist / edgeFollowRange);
+}
+
+// ----------------------------------
+function getEdgeTipInfluenceGlobal(localMouse, polylines, centroid, targetX, targetY, rotation, markerAxis, markerDirection, extraRotation = 0) {
+  if (!localMouse || !polylines || !polylines.length || !centroid) return 0;
+  const markerPoint = getEdgeMarkerPoint(polylines, markerAxis, markerDirection);
+  if (!markerPoint) return 0;
+  const markerWorld = edgeLocalToWorld(markerPoint, centroid, targetX, targetY, rotation, extraRotation);
+  const dist = Math.hypot(localMouse.x - markerWorld.x, localMouse.y - markerWorld.y);
+  const r = Math.max(edgeFollowMarkerRadius || 1, 1);
+  // Global, no cutoff: always > 0, stronger when closer.
+  return 1 / (1 + dist / r);
 }
 
 // ----------------------------------
@@ -1069,14 +1311,36 @@ function updateEdgeHoverWeight(edgeKey, targetWeight) {
 }
 
 // ----------------------------------
-function worldToEdgeLocal(point, centroid, targetX, targetY, rotation) {
+function worldToEdgeLocal(point, centroid, targetX, targetY, rotation, extraRotation = 0) {
   const dx = point.x - targetX;
   const dy = point.y - targetY;
   const cosR = Math.cos(-rotation);
   const sinR = Math.sin(-rotation);
+  const qx = dx * cosR - dy * sinR;
+  const qy = dx * sinR + dy * cosR;
+  const rx = qx + centroid.x;
+  const ry = qy + centroid.y;
+  const cosE = Math.cos(-extraRotation);
+  const sinE = Math.sin(-extraRotation);
   return {
-    x: dx * cosR - dy * sinR + centroid.x,
-    y: dx * sinR + dy * cosR + centroid.y
+    x: rx * cosE - ry * sinE,
+    y: rx * sinE + ry * cosE
+  };
+}
+
+// ----------------------------------
+function edgeLocalToWorld(localPoint, centroid, targetX, targetY, rotation, extraRotation = 0) {
+  const cosE = Math.cos(extraRotation);
+  const sinE = Math.sin(extraRotation);
+  const ex = localPoint.x * cosE - localPoint.y * sinE;
+  const ey = localPoint.x * sinE + localPoint.y * cosE;
+  const dx = ex - centroid.x;
+  const dy = ey - centroid.y;
+  const cosR = Math.cos(rotation);
+  const sinR = Math.sin(rotation);
+  return {
+    x: targetX + dx * cosR - dy * sinR,
+    y: targetY + dx * sinR + dy * cosR
   };
 }
 
@@ -1113,6 +1377,82 @@ function distanceToSegment(px, py, ax, ay, bx, by) {
 // ----------------------------------
 function drawStaticEdgeOverlays(localMouse, isHovering) {
   const topPolys = getEdgeDeformedSlice(edgeTopRangeStart, edgeTopRangeCount, edgeTopPolylines);
+  const topRightPolys = getEdgeDeformedSlice(edgeTopRightRangeStart, edgeTopRightRangeCount, edgeTopRightPolylines);
+  const leftPolys = getEdgeDeformedSlice(edgeLeftRangeStart, edgeLeftRangeCount, edgeLeftPolylines);
+  const bottomPolys = getEdgeDeformedSlice(edgeBottomRangeStart, edgeBottomRangeCount, edgeBottomPolylines);
+  if (!topRightPolys.length) return;
+  if (!leftPolys.length) return;
+  if (!bottomPolys.length) return;
+
+  let rawHoverTop = 0;
+  let rawHoverTopRight = 0;
+  let rawHoverLeft = 0;
+  let rawHoverBottom = 0;
+
+  if (svgViewBox) {
+    const centerXPre = svgViewBox.minX + svgViewBox.width / 2 + circleOffsetX;
+    const centerYPre = svgViewBox.minY + svgViewBox.height / 2 + circleOffsetY;
+    const radiusXPre = (Math.min(svgViewBox.width, svgViewBox.height) * circleScaleX) / 2;
+    const radiusYPre = (Math.min(svgViewBox.width, svgViewBox.height) * circleScaleY) / 2;
+
+    if (topPolys.length && edgeTopCentroid) {
+      const baseAngle = Math.atan2(edgeTopCentroid.y - centerYPre, edgeTopCentroid.x - centerXPre);
+      const currentOffset = getEdgeFollowOffset("top");
+      const basePhase = easePingPong(frameCount * edgeCircleSpeed);
+      const anglePre = baseAngle + edgeCircleTravel * basePhase + currentOffset;
+      const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
+      const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
+      rawHoverTop = getEdgeTipInfluenceGlobal(localMouse, topPolys, edgeTopCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min");
+    }
+
+    if (edgeTopRightOscillate && edgeTopRightCentroid) {
+      const baseAngle = Math.atan2(edgeTopRightCentroid.y - centerYPre, edgeTopRightCentroid.x - centerXPre);
+      const currentOffset = getEdgeFollowOffset("topRight");
+      const basePhase = easePingPong(frameCount * edgeTopRightCircleSpeed);
+      const anglePre = baseAngle + edgeTopRightCircleTravel * basePhase + currentOffset;
+      const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
+      const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
+      rawHoverTopRight = getEdgeTipInfluenceGlobal(localMouse, topRightPolys, edgeTopRightCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min");
+    }
+
+    if (edgeLeftCentroid) {
+      const baseAngle = Math.atan2(edgeLeftCentroid.y - centerYPre, edgeLeftCentroid.x - centerXPre);
+      const currentOffset = getEdgeFollowOffset("left");
+      const basePhase = easePingPong(frameCount * edgeLeftCircleSpeed);
+      const anglePre = baseAngle + edgeLeftCircleTravel * basePhase + currentOffset;
+      const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
+      const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
+      rawHoverLeft = getEdgeTipInfluenceGlobal(localMouse, leftPolys, edgeLeftCentroid, targetXPre, targetYPre, anglePre - baseAngle, "x", "min");
+    }
+
+    if (edgeBottomCentroid) {
+      const baseAngle = Math.atan2(edgeBottomCentroid.y - centerYPre, edgeBottomCentroid.x - centerXPre) + radians(edgeBottomAngleOffsetDeg);
+      const currentOffset = getEdgeFollowOffset("bottom");
+      const basePhase = easePingPong(frameCount * edgeBottomCircleSpeed);
+      const anglePre = baseAngle + edgeBottomCircleTravel * basePhase + currentOffset;
+      const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
+      const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
+      rawHoverBottom = getEdgeTipInfluenceGlobal(localMouse, bottomPolys, edgeBottomCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min", radians(-135));
+    }
+  }
+
+  let closestEdgeKey = null;
+  if (bClosestTipOnlyExtend) {
+    const weights = {
+      top: rawHoverTop,
+      topRight: rawHoverTopRight,
+      left: rawHoverLeft,
+      bottom: rawHoverBottom
+    };
+    let bestW = 0;
+    for (const key in weights) {
+      if (weights[key] > bestW) {
+        bestW = weights[key];
+        closestEdgeKey = key;
+      }
+    }
+  }
+
   if (topPolys.length && edgeTopCentroid && svgViewBox) {
     const centerX = svgViewBox.minX + svgViewBox.width / 2 + circleOffsetX;
     const centerY = svgViewBox.minY + svgViewBox.height / 2 + circleOffsetY;
@@ -1127,17 +1467,17 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const anglePre = baseAngle + edgeCircleTravel * basePhase + currentOffset;
     const targetXPre = centerX + Math.cos(anglePre) * radiusX;
     const targetYPre = centerY + Math.sin(anglePre) * radiusY;
-    const hoverWeight = updateEdgeHoverWeight("top", getEdgeHoverWeight(
-      localMouse,
+    const hoverWeight = updateEdgeHoverWeight("top", rawHoverTop);
+    const extendHoverTop = (!bClosestTipOnlyExtend || closestEdgeKey === "top") ? hoverWeight : 0;
+    const targetTopExtend = edgeTopExtendToLongY * edgeTopExtendBoost * extendHoverTop;
+    const topLerp = targetTopExtend < edgeTopExtendY ? edgeTopExtendReturnLerp : edgeTopExtendLerp;
+    edgeTopExtendY = lerp(edgeTopExtendY, targetTopExtend, topLerp);
+    const topPolysRender = getEdgeExtendedPolylinesCentered(
       topPolys,
-      edgeTopCentroid,
-      targetXPre,
-      targetYPre,
-      anglePre - baseAngle,
-      isHovering,
       "y",
-      "min"
-    ));
+      "min",
+      edgeTopExtendY
+    );
     const phase = updateEdgePhase("top", hoverWeight, basePhase);
     const followOffset = updateEdgeFollower(
       baseAngle,
@@ -1157,20 +1497,14 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       rotate(angle - baseAngle);
     }
     translate(-edgeTopCentroid.x, -edgeTopCentroid.y);
-    drawPolylines(topPolys);
-    drawEdgeMarker(topPolys, "y", "min");
+    drawPolylines(topPolysRender);
+    drawEdgeMarker(topPolysRender, "y", "min");
     pop();
   } else if (topPolys.length) {
     drawPolylines(topPolys);
     drawEdgeMarker(topPolys, "y", "min");
   }
 
-  const topRightPolys = getEdgeDeformedSlice(edgeTopRightRangeStart, edgeTopRightRangeCount, edgeTopRightPolylines);
-  const leftPolys = getEdgeDeformedSlice(edgeLeftRangeStart, edgeLeftRangeCount, edgeLeftPolylines);
-  const bottomPolys = getEdgeDeformedSlice(edgeBottomRangeStart, edgeBottomRangeCount, edgeBottomPolylines);
-  if (!topRightPolys.length) return;
-  if (!leftPolys.length) return;
-  if (!bottomPolys.length) return;
   if (edgeTopRightOscillate && edgeTopRightCentroid && svgViewBox) {
     const centerX = svgViewBox.minX + svgViewBox.width / 2 + circleOffsetX;
     const centerY = svgViewBox.minY + svgViewBox.height / 2 + circleOffsetY;
@@ -1185,17 +1519,27 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const anglePre = baseAngle + edgeTopRightCircleTravel * basePhase + currentOffset;
     const targetXPre = centerX + Math.cos(anglePre) * radiusX;
     const targetYPre = centerY + Math.sin(anglePre) * radiusY;
-    const hoverWeight = updateEdgeHoverWeight("topRight", getEdgeHoverWeight(
-      localMouse,
+    const hoverWeight = updateEdgeHoverWeight("topRight", rawHoverTopRight);
+    const extendHoverTopRight = (!bClosestTipOnlyExtend || closestEdgeKey === "topRight") ? hoverWeight : 0;
+    const targetTopRightExtend = edgeTopRightExtendToLongY * edgeTopExtendBoost * extendHoverTopRight;
+    const topRightLerp = targetTopRightExtend < edgeTopRightExtendY ? edgeTopExtendReturnLerp : edgeTopExtendLerp;
+    edgeTopRightExtendY = lerp(edgeTopRightExtendY, targetTopRightExtend, topRightLerp);
+    const topRightMarker = findExtremePoint(topRightPolys, "y", "min");
+    const topRightCentroidNow = computePolylinesCentroid(topRightPolys);
+    const topRightDirX = (topRightMarker && topRightCentroidNow)
+      ? (topRightMarker.x - topRightCentroidNow.x)
+      : 0;
+    const topRightDirY = (topRightMarker && topRightCentroidNow)
+      ? (topRightMarker.y - topRightCentroidNow.y)
+      : -1;
+    const topRightPolysRender = getEdgeExtendedPolylinesCentered(
       topRightPolys,
-      edgeTopRightCentroid,
-      targetXPre,
-      targetYPre,
-      anglePre - baseAngle,
-      isHovering,
       "y",
-      "min"
-    ));
+      "min",
+      edgeTopRightExtendY,
+      topRightDirX,
+      topRightDirY
+    );
     const phase = updateEdgePhase("topRight", hoverWeight, basePhase);
     const followOffset = updateEdgeFollower(
       baseAngle,
@@ -1216,8 +1560,8 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       rotate(angle - baseAngle);
     }
     translate(-edgeTopRightCentroid.x, -edgeTopRightCentroid.y);
-    drawPolylines(topRightPolys);
-    drawEdgeMarker(topRightPolys, "y", "min");
+    drawPolylines(topRightPolysRender);
+    drawEdgeMarker(topRightPolysRender, "y", "min");
     pop();
   } else {
     drawPolylines(topRightPolys);
@@ -1237,17 +1581,27 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const anglePre = baseAngle + edgeLeftCircleTravel * basePhase + currentOffset;
     const targetXPre = centerX + Math.cos(anglePre) * radiusX;
     const targetYPre = centerY + Math.sin(anglePre) * radiusY;
-    const hoverWeight = updateEdgeHoverWeight("left", getEdgeHoverWeight(
-      localMouse,
+    const hoverWeight = updateEdgeHoverWeight("left", rawHoverLeft);
+    const extendHoverLeft = (!bClosestTipOnlyExtend || closestEdgeKey === "left") ? hoverWeight : 0;
+    const targetLeftExtend = edgeLeftExtendToLongX * edgeTopExtendBoost * extendHoverLeft;
+    const leftLerp = targetLeftExtend < edgeLeftExtendX ? edgeTopExtendReturnLerp : edgeTopExtendLerp;
+    edgeLeftExtendX = lerp(edgeLeftExtendX, targetLeftExtend, leftLerp);
+    const leftMarker = findExtremePoint(leftPolys, "x", "min");
+    const leftCentroidNow = computePolylinesCentroid(leftPolys);
+    const leftDirX = (leftMarker && leftCentroidNow)
+      ? (leftMarker.x - leftCentroidNow.x)
+      : -1;
+    const leftDirY = (leftMarker && leftCentroidNow)
+      ? (leftMarker.y - leftCentroidNow.y)
+      : 0;
+    const leftPolysRender = getEdgeExtendedPolylinesCentered(
       leftPolys,
-      edgeLeftCentroid,
-      targetXPre,
-      targetYPre,
-      anglePre - baseAngle,
-      isHovering,
       "x",
-      "min"
-    ));
+      "min",
+      edgeLeftExtendX,
+      leftDirX,
+      leftDirY
+    );
     const phase = updateEdgePhase("left", hoverWeight, basePhase);
     const followOffset = updateEdgeFollower(
       baseAngle,
@@ -1268,8 +1622,8 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       rotate(angle - baseAngle);
     }
     translate(-edgeLeftCentroid.x, -edgeLeftCentroid.y);
-    drawPolylines(leftPolys);
-    drawEdgeMarker(leftPolys, "x", "min");
+    drawPolylines(leftPolysRender);
+    drawEdgeMarker(leftPolysRender, "x", "min");
     pop();
   } else {
     drawPolylines(leftPolys);
@@ -1289,17 +1643,17 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const anglePre = baseAngle + edgeBottomCircleTravel * basePhase + currentOffset;
     const targetXPre = centerX + Math.cos(anglePre) * radiusX;
     const targetYPre = centerY + Math.sin(anglePre) * radiusY;
-    const hoverWeight = updateEdgeHoverWeight("bottom", getEdgeHoverWeight(
-      localMouse,
+    const hoverWeight = updateEdgeHoverWeight("bottom", rawHoverBottom);
+    const extendHoverBottom = (!bClosestTipOnlyExtend || closestEdgeKey === "bottom") ? hoverWeight : 0;
+    const targetBottomExtend = edgeBottomExtendToLongY * edgeTopExtendBoost * extendHoverBottom;
+    const bottomLerp = targetBottomExtend < edgeBottomExtendY ? edgeTopExtendReturnLerp : edgeTopExtendLerp;
+    edgeBottomExtendY = lerp(edgeBottomExtendY, targetBottomExtend, bottomLerp);
+    const bottomPolysRender = getEdgeExtendedPolylinesCentered(
       bottomPolys,
-      edgeBottomCentroid,
-      targetXPre,
-      targetYPre,
-      anglePre - baseAngle,
-      isHovering,
       "y",
-      "max"
-    ));
+      "min",
+      edgeBottomExtendY
+    );
     const phase = updateEdgePhase("bottom", hoverWeight, basePhase);
     const followOffset = updateEdgeFollower(
       baseAngle,
@@ -1320,12 +1674,13 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       rotate(angle - baseAngle);
     }
     translate(-edgeBottomCentroid.x, -edgeBottomCentroid.y);
-    drawPolylines(bottomPolys);
-    drawEdgeMarker(bottomPolys, "y", "max");
+    rotate(radians(-135));
+    drawPolylines(bottomPolysRender);
+    drawEdgeMarker(bottomPolysRender, "y", "min");
     pop();
   } else {
     drawPolylines(bottomPolys);
-    drawEdgeMarker(bottomPolys, "y", "max");
+    drawEdgeMarker(bottomPolys, "y", "min");
   }
 
 }
