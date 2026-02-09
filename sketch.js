@@ -158,7 +158,7 @@ var edgeTopExtendToLongY = 80;
 var edgeTopRightExtendToLongY = 50;
 var edgeLeftExtendToLongX = 20;
 var edgeBottomExtendToLongY = 40;
-var edgeTopExtendLerp = .1;
+var edgeTopExtendLerp = .05;
 var edgeTopExtendReturnLerp = .03;
 var edgeTopExtendBoost = 2.0;
 var bClosestTipOnlyExtend = true;
@@ -178,6 +178,10 @@ var bShowLogoMouseCursor = true;
 var logoMouseCursorDiameter = 12;
 var logoMouseCursorScale = 0.62;
 var logoMouseCursorStrokeWeight = 2;
+// Interaction zone around the logo (screen-space).
+// Outside this radius, edges/sprouts ease back to rest.
+var logoInteractionRadiusMul = 1.25;
+var logoInteractionRadiusPxBias = 140;
 // Toggle for the debug ellipse overlay (only draws when helpers are enabled).
 // NOTE: This must be a boolean; using an undefined identifier here will throw
 // a ReferenceError and prevent the entire sketch from loading.
@@ -405,8 +409,9 @@ function draw() {
   // Update deformation while hovering.
   const localMouseLogo = getLocalMouse(svgFitLogo);
   const localMouseEdges = getLocalMouse(svgFitEdges);
-  const isHovering =
+  const isInsideCanvas =
     mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height;
+  const isHovering = isInsideCanvas && isMouseInLogoInteractionZone(mouseX, mouseY);
 
   updateInnerSproutRotations(localMouseLogo, isHovering);
   // updateDeformedPolylines(localMouseLogo, isHovering);
@@ -1389,7 +1394,7 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
   let rawHoverLeft = 0;
   let rawHoverBottom = 0;
 
-  if (svgViewBox) {
+  if (svgViewBox && isHovering) {
     const centerXPre = svgViewBox.minX + svgViewBox.width / 2 + circleOffsetX;
     const centerYPre = svgViewBox.minY + svgViewBox.height / 2 + circleOffsetY;
     const radiusXPre = (Math.min(svgViewBox.width, svgViewBox.height) * circleScaleX) / 2;
@@ -1922,6 +1927,21 @@ function getLocalMouse(fit) {
     x: (mouseX - activeFit.offsetX) / activeFit.scale,
     y: (mouseY - activeFit.offsetY) / activeFit.scale
   };
+}
+
+// ----------------------------------
+function isMouseInLogoInteractionZone(mx, my) {
+  if (!svgFitLogo || !svgViewBox) return true;
+  const centerLogoX = svgViewBox.minX + svgViewBox.width * 0.5;
+  const centerLogoY = svgViewBox.minY + svgViewBox.height * 0.5;
+  const centerScreenX = svgFitLogo.offsetX + centerLogoX * svgFitLogo.scale;
+  const centerScreenY = svgFitLogo.offsetY + centerLogoY * svgFitLogo.scale;
+  const baseRadius = Math.min(svgViewBox.width, svgViewBox.height) * 0.5 * svgFitLogo.scale;
+  const radius = Math.max(1, baseRadius * logoInteractionRadiusMul + logoInteractionRadiusPxBias);
+  const d = Math.hypot(mx - centerScreenX, my - centerScreenY);
+  // Safety fallback: if radius math is too small, don't block all interaction.
+  if (!Number.isFinite(radius) || radius < 40) return true;
+  return d <= radius;
 }
 
 // ----------------------------------
