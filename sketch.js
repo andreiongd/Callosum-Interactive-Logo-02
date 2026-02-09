@@ -143,7 +143,7 @@ var edgeHoverWeightBottom = 0;
 
 // --- Edge drawing offsets (baked into deform space) ---
 var edgeTopOffsetX = 100;
-var edgeTopOffsetY = -640;
+var edgeTopOffsetY = -639;
 var edgeTopRightOffsetX = - 112;
 var edgeTopRightOffsetY = -118;
 var edgeLeftOffsetX = - 216;
@@ -154,13 +154,23 @@ var edgeTopExtendY = 0;
 var edgeTopRightExtendY = 0;
 var edgeLeftExtendX = 0;
 var edgeBottomExtendY = 0;
-var edgeTopExtendToLongY = 20;
-var edgeTopRightExtendToLongY = 20;
-var edgeLeftExtendToLongX = 20;
-var edgeBottomExtendToLongY = 20;
+var edgeTopExtendToLongY = 30;
+var edgeTopRightExtendToLongY = 30;
+var edgeLeftExtendToLongX = 30;
+var edgeBottomExtendToLongY = 30;
 var edgeTopExtendLerp = .05;
 var edgeTopExtendReturnLerp = .03;
 var edgeTopExtendBoost = 2.0;
+
+var edgeTopOffsetExtendMulMaxX = 1.015;
+var edgeTopOffsetExtendMulMaxY = 1.015;
+var edgeTopRightOffsetExtendMulMaxX = 0.99;
+var edgeTopRightOffsetExtendMulMaxY = 1.09;
+var edgeLeftOffsetExtendMulMaxX = 1.05;
+var edgeLeftOffsetExtendMulMaxY = .99;
+var edgeBottomOffsetExtendMulMaxX = 1.01;
+var edgeBottomOffsetExtendMulMaxY = 0.995;
+
 var bClosestTipOnlyExtend = true;
 // Extension profile along an edge (t: base=0, tip=1).
 // Start extension later so lower/base sections stay quiet.
@@ -279,11 +289,11 @@ function preload() {
 
 // ----------------------------------
 function setup() {
-  createCanvas(1920, 1080);
+  createCanvas(1728, 1118);
   if (bShowLogoMouseCursor) noCursor();
 
-  bgColor = color(254, 158, 207);
-  logoColor = color(4, 4, 4);
+  bgColor = color("#D69ECF");
+  logoColor = color("#392F25");
 
   makeSvgParser();
   svgViewBox = parseSvgViewBox(svgStrings);
@@ -1201,6 +1211,13 @@ function remapEdgeExtendWeight(tAxis, tTip) {
 }
 
 // ----------------------------------
+function getEdgeOffsetExtendMul(currentExtend, extendRange, maxMul) {
+  const range = Math.max(extendRange || 0, 1e-6);
+  const t = constrain((currentExtend || 0) / range, 0, 1);
+  return lerp(1, maxMul == null ? 1 : maxMul, t);
+}
+
+// ----------------------------------
 function translatePolylines(polylines, dx, dy) {
   if (!dx && !dy) return;
   for (let i = 0; i < polylines.length; i++) {
@@ -1487,8 +1504,12 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const angle = baseAngle + edgeCircleTravel * phase + followOffset;
     const targetX = centerX + Math.cos(angle) * radiusX;
     const targetY = centerY + Math.sin(angle) * radiusY;
+    const topOffsetMulX = getEdgeOffsetExtendMul(edgeTopExtendY, edgeTopExtendToLongY * edgeTopExtendBoost, edgeTopOffsetExtendMulMaxX);
+    const topOffsetMulY = getEdgeOffsetExtendMul(edgeTopExtendY, edgeTopExtendToLongY * edgeTopExtendBoost, edgeTopOffsetExtendMulMaxY);
+    const topNudgeX = edgeTopOffsetX * (topOffsetMulX - 1);
+    const topNudgeY = edgeTopOffsetY * (topOffsetMulY - 1);
     push();
-    translate(targetX, targetY);
+    translate(targetX + topNudgeX, targetY + topNudgeY);
     if (edgeRotateOffset) {
       rotate(angle - baseAngle);
     }
@@ -1549,9 +1570,13 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const angle = baseAngle + edgeTopRightCircleTravel * phase + followOffset;
     const targetX = centerX + Math.cos(angle) * radiusX;
     const targetY = centerY + Math.sin(angle) * radiusY;
+    const topRightOffsetMulX = getEdgeOffsetExtendMul(edgeTopRightExtendY, edgeTopRightExtendToLongY * edgeTopExtendBoost, edgeTopRightOffsetExtendMulMaxX);
+    const topRightOffsetMulY = getEdgeOffsetExtendMul(edgeTopRightExtendY, edgeTopRightExtendToLongY * edgeTopExtendBoost, edgeTopRightOffsetExtendMulMaxY);
+    const topRightNudgeX = edgeTopRightOffsetX * (topRightOffsetMulX - 1);
+    const topRightNudgeY = edgeTopRightOffsetY * (topRightOffsetMulY - 1);
     const rotation = edgeRotateOffset ? angle - baseAngle : 0;
     push();
-    translate(targetX, targetY);
+    translate(targetX + topRightNudgeX, targetY + topRightNudgeY);
     if (edgeRotateOffset) {
       rotate(angle - baseAngle);
     }
@@ -1611,9 +1636,13 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const angle = baseAngle + edgeLeftCircleTravel * phase + followOffset;
     const targetX = centerX + Math.cos(angle) * radiusX;
     const targetY = centerY + Math.sin(angle) * radiusY;
+    const leftOffsetMulX = getEdgeOffsetExtendMul(edgeLeftExtendX, edgeLeftExtendToLongX * edgeTopExtendBoost, edgeLeftOffsetExtendMulMaxX);
+    const leftOffsetMulY = getEdgeOffsetExtendMul(edgeLeftExtendX, edgeLeftExtendToLongX * edgeTopExtendBoost, edgeLeftOffsetExtendMulMaxY);
+    const leftNudgeX = edgeLeftOffsetX * (leftOffsetMulX - 1);
+    const leftNudgeY = edgeLeftOffsetY * (leftOffsetMulY - 1);
     const rotation = edgeRotateOffset ? angle - baseAngle : 0;
     push();
-    translate(targetX, targetY);
+    translate(targetX + leftNudgeX, targetY + leftNudgeY);
     if (edgeRotateOffset) {
       rotate(angle - baseAngle);
     }
@@ -1663,9 +1692,13 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
     const angle = baseAngle + edgeBottomCircleTravel * phase + followOffset;
     const targetX = centerX + Math.cos(angle) * radiusX;
     const targetY = centerY + Math.sin(angle) * radiusY;
+    const bottomOffsetMulX = getEdgeOffsetExtendMul(edgeBottomExtendY, edgeBottomExtendToLongY * edgeTopExtendBoost, edgeBottomOffsetExtendMulMaxX);
+    const bottomOffsetMulY = getEdgeOffsetExtendMul(edgeBottomExtendY, edgeBottomExtendToLongY * edgeTopExtendBoost, edgeBottomOffsetExtendMulMaxY);
+    const bottomNudgeX = edgeBottomOffsetX * (bottomOffsetMulX - 1);
+    const bottomNudgeY = edgeBottomOffsetY * (bottomOffsetMulY - 1);
     const rotation = edgeRotateOffset ? angle - baseAngle : 0;
     push();
-    translate(targetX, targetY);
+    translate(targetX + bottomNudgeX, targetY + bottomNudgeY);
     if (edgeRotateOffset) {
       rotate(angle - baseAngle);
     }
