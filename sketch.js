@@ -47,7 +47,7 @@ var svgScaleFactorEdges = 0.76 * globalArtworkScale; // Edge overlay scale
 var basePolylines = [];
 var deformedPolylines = [];
 var pointVelocities = [];
-var polylineTolerance = 6;
+var polylineTolerance = 4;
 var deformRadius = 50;
 var deformStrength = 0.5;
 var returnStrength = 0.50;
@@ -143,40 +143,40 @@ var edgeHoverWeightBottom = 0;
 
 // --- Edge drawing offsets (baked into deform space) ---
 var edgeTopOffsetX = 100;
-var edgeTopOffsetY = -639;
+var edgeTopOffsetY = -638;
 var edgeTopRightOffsetX = - 112;
-var edgeTopRightOffsetY = -118;
-var edgeLeftOffsetX = - 216;
-var edgeLeftOffsetY = -350;
-var edgeBottomOffsetX = -1175;
-var edgeBottomOffsetY = - 597;
+var edgeTopRightOffsetY = -116;
+var edgeLeftOffsetX = - 227;
+var edgeLeftOffsetY = -328;
+var edgeBottomOffsetX = -1173;
+var edgeBottomOffsetY = - 598;
 var edgeTopExtendY = 0;
 var edgeTopRightExtendY = 0;
 var edgeLeftExtendX = 0;
 var edgeBottomExtendY = 0;
-var edgeTopExtendToLongY = 30;
+var edgeTopExtendToLongY = 20;
 var edgeTopRightExtendToLongY = 30;
 var edgeLeftExtendToLongX = 30;
-var edgeBottomExtendToLongY = 30;
+var edgeBottomExtendToLongY = 20;
 var edgeTopExtendLerp = .05;
 var edgeTopExtendReturnLerp = .03;
 var edgeTopExtendBoost = 2.0;
 
 
 var edgeTopOffsetExtendMulMaxX = 1.015;
-var edgeTopOffsetExtendMulMaxY = 1.015;
-var edgeTopRightOffsetExtendMulMaxX = 0.99;
-var edgeTopRightOffsetExtendMulMaxY = 1.09;
-var edgeLeftOffsetExtendMulMaxX = 1.05;
-var edgeLeftOffsetExtendMulMaxY = .99;
-var edgeBottomOffsetExtendMulMaxX = 1.01;
-var edgeBottomOffsetExtendMulMaxY = 0.995;
+var edgeTopOffsetExtendMulMaxY = 1.024;
+var edgeTopRightOffsetExtendMulMaxX = 0.85;
+var edgeTopRightOffsetExtendMulMaxY = 1.2;
+var edgeLeftOffsetExtendMulMaxX = 1.11;
+var edgeLeftOffsetExtendMulMaxY = 1.00;
+var edgeBottomOffsetExtendMulMaxX = 1.010;
+var edgeBottomOffsetExtendMulMaxY = 0.984;
 
 var bClosestTipOnlyExtend = true;
 // Extension profile along an edge (t: base=0, tip=1).
 // Start extension later so lower/base sections stay quiet.
-var edgeExtendStartT = 0.88;
-var edgeExtendFullT = 0.82;
+var edgeExtendStartT = 0.48;
+var edgeExtendFullT = 0.50;
 // Tip distance influence should assist, not dominate axis progression.
 var edgeExtendTipBias = 0.18;
 
@@ -193,6 +193,15 @@ var logoMouseCursorStrokeWeight = 2;
 // Outside this radius, edges/sprouts ease back to rest.
 var logoInteractionRadiusMul = 1.25;
 var logoInteractionRadiusPxBias = 140;
+
+// Center “deadzone” for edge extension (screen-space).
+// If the mouse is near the logo center, edges should NOT extend.
+// Only when the mouse goes outside this radius do edges start extending.
+// (Extension ramps in smoothly over `edgeExtendDeadzoneFadePx`.)
+var edgeExtendDeadzoneRadiusMul = 0.22;
+var edgeExtendDeadzoneRadiusPxBias = 40;
+var edgeExtendDeadzoneFadePx = 80;
+var bShowEdgeExtendDeadzoneDebug = false;
 // Toggle for the debug ellipse overlay (only draws when helpers are enabled).
 // NOTE: This must be a boolean; using an undefined identifier here will throw
 // a ReferenceError and prevent the entire sketch from loading.
@@ -439,7 +448,8 @@ function draw() {
     scale(svgFitEdges.scale);
   }
   drawEllipseOverlay();
-  drawStaticEdgeOverlays(localMouseEdges, isHovering);
+  const edgeExtendEnableW = isHovering ? getEdgeExtendEnableWeight(mouseX, mouseY) : 0;
+  drawStaticEdgeOverlays(localMouseEdges, isHovering, edgeExtendEnableW);
   pop();
 
   // Draw innerSprout(s) last so they always sit on top of all other artwork.
@@ -461,10 +471,56 @@ function draw() {
 
   drawLogoMouseCursor();
 
+  drawEdgeExtendDeadzoneDebug();
+
   if (bDoExportSvg) {
     endRecordSvg();
     bDoExportSvg = false;
   }
+}
+
+// ----------------------------------
+// 0..1 scalar used to gate edge extension.
+// - 0 when mouse is within the center deadzone
+// - 1 when mouse is outside (with a smooth fade)
+function getEdgeExtendEnableWeight(mx, my) {
+  if (!svgFitLogo || !svgViewBox) return 1;
+  const centerLogoX = svgViewBox.minX + svgViewBox.width * 0.5;
+  const centerLogoY = svgViewBox.minY + svgViewBox.height * 0.5;
+  const centerScreenX = svgFitLogo.offsetX + centerLogoX * svgFitLogo.scale;
+  const centerScreenY = svgFitLogo.offsetY + centerLogoY * svgFitLogo.scale;
+  const baseRadius = Math.min(svgViewBox.width, svgViewBox.height) * 0.5 * svgFitLogo.scale;
+  const radius = Math.max(1, baseRadius * (edgeExtendDeadzoneRadiusMul || 0) + (edgeExtendDeadzoneRadiusPxBias || 0));
+  const fade = Math.max(edgeExtendDeadzoneFadePx || 1, 1);
+  const d = Math.hypot(mx - centerScreenX, my - centerScreenY);
+
+  // t=0 inside radius, t=1 when we're radius+fade away.
+  const t = constrain((d - radius) / fade, 0, 1);
+  return easeSmoothstep(t);
+}
+
+// ----------------------------------
+function drawEdgeExtendDeadzoneDebug() {
+  if (!bShowHelpers || !bShowEdgeExtendDeadzoneDebug) return;
+  if (!svgFitLogo || !svgViewBox) return;
+
+  const centerLogoX = svgViewBox.minX + svgViewBox.width * 0.5;
+  const centerLogoY = svgViewBox.minY + svgViewBox.height * 0.5;
+  const centerScreenX = svgFitLogo.offsetX + centerLogoX * svgFitLogo.scale;
+  const centerScreenY = svgFitLogo.offsetY + centerLogoY * svgFitLogo.scale;
+  const baseRadius = Math.min(svgViewBox.width, svgViewBox.height) * 0.5 * svgFitLogo.scale;
+  const radius = Math.max(1, baseRadius * (edgeExtendDeadzoneRadiusMul || 0) + (edgeExtendDeadzoneRadiusPxBias || 0));
+  const radius2 = radius + Math.max(edgeExtendDeadzoneFadePx || 0, 0);
+
+  push();
+  resetMatrix();
+  noFill();
+  stroke(0, 120);
+  strokeWeight(2);
+  ellipse(centerScreenX, centerScreenY, radius * 2, radius * 2);
+  stroke(0, 50);
+  ellipse(centerScreenX, centerScreenY, radius2 * 2, radius2 * 2);
+  pop();
 }
 
 // ----------------------------------
@@ -1389,7 +1445,7 @@ function distanceToSegment(px, py, ax, ay, bx, by) {
 }
 
 // ----------------------------------
-function drawStaticEdgeOverlays(localMouse, isHovering) {
+function drawStaticEdgeOverlays(localMouse, isHovering, extendEnableW = 1) {
   const topPolys = getEdgeDeformedSlice(edgeTopRangeStart, edgeTopRangeCount, edgeTopPolylines);
   const topRightPolys = getEdgeDeformedSlice(edgeTopRightRangeStart, edgeTopRightRangeCount, edgeTopRightPolylines);
   const leftPolys = getEdgeDeformedSlice(edgeLeftRangeStart, edgeLeftRangeCount, edgeLeftPolylines);
@@ -1402,6 +1458,8 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
   let rawHoverTopRight = 0;
   let rawHoverLeft = 0;
   let rawHoverBottom = 0;
+
+  const extendW = constrain(extendEnableW == null ? 1 : extendEnableW, 0, 1);
 
   if (svgViewBox && isHovering) {
     const centerXPre = svgViewBox.minX + svgViewBox.width / 2 + circleOffsetX;
@@ -1416,7 +1474,7 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       const anglePre = baseAngle + edgeCircleTravel * basePhase + currentOffset;
       const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
       const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
-      rawHoverTop = getEdgeTipInfluenceGlobal(localMouse, topPolys, edgeTopCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min");
+      rawHoverTop = getEdgeTipInfluenceGlobal(localMouse, topPolys, edgeTopCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min") * extendW;
     }
 
     if (edgeTopRightOscillate && edgeTopRightCentroid) {
@@ -1426,7 +1484,7 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       const anglePre = baseAngle + edgeTopRightCircleTravel * basePhase + currentOffset;
       const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
       const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
-      rawHoverTopRight = getEdgeTipInfluenceGlobal(localMouse, topRightPolys, edgeTopRightCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min");
+      rawHoverTopRight = getEdgeTipInfluenceGlobal(localMouse, topRightPolys, edgeTopRightCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min") * extendW;
     }
 
     if (edgeLeftCentroid) {
@@ -1436,7 +1494,7 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       const anglePre = baseAngle + edgeLeftCircleTravel * basePhase + currentOffset;
       const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
       const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
-      rawHoverLeft = getEdgeTipInfluenceGlobal(localMouse, leftPolys, edgeLeftCentroid, targetXPre, targetYPre, anglePre - baseAngle, "x", "min");
+      rawHoverLeft = getEdgeTipInfluenceGlobal(localMouse, leftPolys, edgeLeftCentroid, targetXPre, targetYPre, anglePre - baseAngle, "x", "min") * extendW;
     }
 
     if (edgeBottomCentroid) {
@@ -1446,7 +1504,7 @@ function drawStaticEdgeOverlays(localMouse, isHovering) {
       const anglePre = baseAngle + edgeBottomCircleTravel * basePhase + currentOffset;
       const targetXPre = centerXPre + Math.cos(anglePre) * radiusXPre;
       const targetYPre = centerYPre + Math.sin(anglePre) * radiusYPre;
-      rawHoverBottom = getEdgeTipInfluenceGlobal(localMouse, bottomPolys, edgeBottomCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min", radians(-135));
+      rawHoverBottom = getEdgeTipInfluenceGlobal(localMouse, bottomPolys, edgeBottomCentroid, targetXPre, targetYPre, anglePre - baseAngle, "y", "min", radians(-135)) * extendW;
     }
   }
 
