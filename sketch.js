@@ -103,8 +103,8 @@ var edgeFollowDamping = 0.7;
 var edgeFollowMarkerRadius = 600;
 // Proximity-based responsiveness: far = slower, near = faster.
 // Final follow speed multiplier is lerp(min..max, hoverWeight).
-var edgeFollowSpeedMinMul = 0.75;
-var edgeFollowSpeedMaxMul = 2.0;
+var edgeFollowSpeedMinMul = 0.5;
+var edgeFollowSpeedMaxMul = 1.0;
 
 var edgeTopFollowMinDeg = -60;
 var edgeTopFollowMaxDeg = 30;
@@ -189,6 +189,13 @@ var bShowLogoMouseCursor = true;
 var logoMouseCursorDiameter = 12;
 var logoMouseCursorScale = 0.62;
 var logoMouseCursorStrokeWeight = 2;
+// Prevent re-entry jitter: once we start returning to rest after leaving
+// canvas, keep returning until all animated states are near their rest values.
+var bForceReturnToRest = false;
+var returnSettlePosEps = 1.0;
+var returnSettleVelEps = 0.08;
+var returnLockFrames = 0;
+var returnLockMaxFrames = 24;
 // Interaction zone around the logo (screen-space).
 // Outside this radius, edges/sprouts ease back to rest.
 var logoInteractionRadiusMul = 1.25;
@@ -422,7 +429,22 @@ function draw() {
   const localMouseEdges = getLocalMouse(svgFitEdges);
   const isInsideCanvas =
     mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height;
-  const isHovering = isInsideCanvas && isMouseInLogoInteractionZone(mouseX, mouseY);
+  if (!isInsideCanvas) {
+    bForceReturnToRest = true;
+    returnLockFrames = 0;
+  } else if (bForceReturnToRest) {
+    returnLockFrames += 1;
+    const timedOut = returnLockFrames >= returnLockMaxFrames;
+    if (timedOut || isSystemAtRest()) {
+      bForceReturnToRest = false;
+      returnLockFrames = 0;
+    }
+  } else {
+    returnLockFrames = 0;
+  }
+  // Interaction is disabled while we are forcing a full settle-back-to-rest,
+  // even if the cursor re-enters quickly.
+  const isHovering = isInsideCanvas && !bForceReturnToRest;
 
   updateInnerSproutRotations(localMouseLogo, isHovering);
   // updateDeformedPolylines(localMouseLogo, isHovering);
@@ -2112,6 +2134,44 @@ function computeContainFit(viewBox, targetW, targetH, userScale = 1) {
   const offsetX = (targetW - viewBox.width * scale) / 2 - viewBox.minX * scale;
   const offsetY = (targetH - viewBox.height * scale) / 2 - viewBox.minY * scale;
   return { scale, offsetX, offsetY };
+}
+
+// ----------------------------------
+function isSystemAtRest() {
+  const posEps = Math.max(returnSettlePosEps || 0, 0);
+  const velEps = Math.max(returnSettleVelEps || 0, 0);
+
+  const sproutSettled =
+    Math.abs(innerSproutCurrentDeg01 - innerSproutRotationDeg01) <= posEps &&
+    Math.abs(innerSproutCurrentDeg02 - innerSproutRotationDeg02) <= posEps &&
+    Math.abs(innerSproutCurrentDeg03 - innerSproutRotationDeg03) <= posEps &&
+    Math.abs(innerSproutVelDeg01) <= velEps &&
+    Math.abs(innerSproutVelDeg02) <= velEps &&
+    Math.abs(innerSproutVelDeg03) <= velEps;
+
+  const edgeSettled =
+    Math.abs(edgeTopFollowOffset) <= posEps &&
+    Math.abs(edgeTopRightFollowOffset) <= posEps &&
+    Math.abs(edgeLeftFollowOffset) <= posEps &&
+    Math.abs(edgeBottomFollowOffset) <= posEps &&
+    Math.abs(edgeTopFollowVelocity) <= velEps &&
+    Math.abs(edgeTopRightFollowVelocity) <= velEps &&
+    Math.abs(edgeLeftFollowVelocity) <= velEps &&
+    Math.abs(edgeBottomFollowVelocity) <= velEps;
+
+  const extendSettled =
+    Math.abs(edgeTopExtendY) <= posEps &&
+    Math.abs(edgeTopRightExtendY) <= posEps &&
+    Math.abs(edgeLeftExtendX) <= posEps &&
+    Math.abs(edgeBottomExtendY) <= posEps;
+
+  const hoverSettled =
+    Math.abs(edgeHoverWeightTop) <= velEps &&
+    Math.abs(edgeHoverWeightTopRight) <= velEps &&
+    Math.abs(edgeHoverWeightLeft) <= velEps &&
+    Math.abs(edgeHoverWeightBottom) <= velEps;
+
+  return sproutSettled && edgeSettled && extendSettled && hoverSettled;
 }
 
 // ----------------------------------
